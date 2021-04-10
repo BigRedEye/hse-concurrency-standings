@@ -78,12 +78,12 @@ func run() error {
 			return err
 		}
 
-		nameParser := newStudentNameParser()
+		titleParser := newMergeRequestTitleParser()
 
-		query := daemon.sheets.Insert(config.GoogleSpreadsheetId, "Merge Requests").Into("Student", "Username", "Title", "Created at", "Merge status", "Pipeline status", "Url")
+		query := daemon.sheets.Insert(config.GoogleSpreadsheetId, "Merge Requests").Into("Student", "Task", "Merge request title", "Created at", "Merge status", "Pipeline status", "Url")
 		for _, mr := range group.MergeRequests.Nodes {
-			name := nameParser.parse(mr)
-			query.Values(name, mr.Author.Username, mr.Title, mr.CreatedAt, mr.MergeStatus, mr.HeadPipeline.Status, mr.WebUrl)
+			info := titleParser.parse(mr)
+			query.Values(info.student, info.task, mr.Title, mr.CreatedAt, mr.MergeStatus, mr.HeadPipeline.Status, mr.WebUrl)
 		}
 		if err := query.Do(); err != nil {
 			log.WithError(err).Errorln("Failed to append merge requests to the table")
@@ -107,21 +107,35 @@ func run() error {
 	}
 }
 
-type studentNameParser struct {
+type mergeRequestTitleParser struct {
 	re *regexp.Regexp
 }
 
-func newStudentNameParser() *studentNameParser {
-	re := regexp.MustCompile(`^\[hse\] \[(\w+)-(\w+)\] .+/.+$`)
-	return &studentNameParser{
+type mergeRequestTitle struct {
+	unversity string
+	student   string
+	task      string
+}
+
+func newMergeRequestTitleParser() *mergeRequestTitleParser {
+	re := regexp.MustCompile(`^\[(\w+)\] \[(\w+)-(\w+)\] (.+/.+)$`)
+	return &mergeRequestTitleParser{
 		re: re,
 	}
 }
 
-func (s *studentNameParser) parse(mr *types.MergeRequest) string {
+func (s *mergeRequestTitleParser) parse(mr *types.MergeRequest) *mergeRequestTitle {
 	groups := s.re.FindStringSubmatch(mr.Title)
-	if len(groups) < 3 {
-		return "@" + mr.Author.Username
+	if len(groups) != 5 {
+		return &mergeRequestTitle{
+			unversity: "unknown",
+			student:   "@" + mr.Author.Username,
+			task:      mr.Title,
+		}
 	}
-	return groups[1] + " " + groups[2]
+	return &mergeRequestTitle{
+		unversity: groups[1],
+		student:   groups[2] + " " + groups[3],
+		task:      groups[4],
+	}
 }

@@ -299,7 +299,7 @@ func (q *SortQuery) Do() error {
 		SortRange: &sheets.SortRangeRequest{
 			Range: &sheets.GridRange{
 				SheetId:       0,
-				StartRowIndex: 2,
+				StartRowIndex: 1,
 			},
 			SortSpecs: specs,
 		},

@@ -93,7 +93,7 @@ func run() error {
 				return err
 			}
 
-			if err := snapshot.Sort().By("Username", "Title").Do(); err != nil {
+			if err := snapshot.Sort().By("Student", "Task").Do(); err != nil {
 				log.WithError(err).Errorln("Failed to sort table")
 				return err
 			}

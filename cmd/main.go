@@ -112,7 +112,7 @@ func run() error {
 		if err := runIter(); err != nil {
 			log.WithError(err).Warn("Iteration failed")
 		}
-		time.Sleep(time.Second * 60)
+		time.Sleep(config.IterationInterval)
 	}
 }
 

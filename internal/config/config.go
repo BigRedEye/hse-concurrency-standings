@@ -1,17 +1,20 @@
 package config
 
 import (
+	"time"
+
 	log "github.com/sirupsen/logrus"
 
 	"github.com/spf13/viper"
 )
 
 type Config struct {
-	GoogleCredentialsPath string `mapstructure:"google_credentials_path"`
-	GoogleSpreadsheetId   string `mapstructure:"google_spreadsheet_id"`
-	GitLabToken           string `mapstructure:"gitlab_token"`
-	GitLabGroup           string `mapstructure:"gitlab_group"`
-	GitLabLabel           string `mapstructure:"gitlab_label"`
+	GoogleCredentialsPath string        `mapstructure:"google_credentials_path"`
+	GoogleSpreadsheetId   string        `mapstructure:"google_spreadsheet_id"`
+	GitLabToken           string        `mapstructure:"gitlab_token"`
+	GitLabGroup           string        `mapstructure:"gitlab_group"`
+	GitLabLabel           string        `mapstructure:"gitlab_label"`
+	IterationInterval     time.Duration `mapstructure:"iteration_interval"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -20,6 +23,7 @@ func LoadConfig() (*Config, error) {
 	viper.BindEnv("GITLAB_TOKEN")
 	viper.BindEnv("GITLAB_GROUP")
 	viper.BindEnv("GITLAB_LABEL")
+	viper.BindEnv("ITERATION_INTERVAL")
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {

@@ -80,10 +80,10 @@ func run() error {
 
 		nameParser := newStudentNameParser()
 
-		query := daemon.sheets.Insert(config.GoogleSpreadsheetId, "Merge Requests").Into("Student", "Title", "Created at", "Merge status", "Pipeline status", "Url")
+		query := daemon.sheets.Insert(config.GoogleSpreadsheetId, "Merge Requests").Into("Student", "Username", "Title", "Created at", "Merge status", "Pipeline status", "Url")
 		for _, mr := range group.MergeRequests.Nodes {
 			name := nameParser.parse(mr)
-			query.Values(name, mr.Title, mr.CreatedAt, mr.MergeStatus, mr.HeadPipeline.Status, mr.WebUrl)
+			query.Values(name, mr.Author.Username, mr.Title, mr.CreatedAt, mr.MergeStatus, mr.HeadPipeline.Status, mr.WebUrl)
 		}
 		if err := query.Do(); err != nil {
 			log.WithError(err).Errorln("Failed to append merge requests to the table")

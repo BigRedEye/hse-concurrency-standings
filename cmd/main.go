@@ -75,44 +75,33 @@ func run() error {
 		}
 		log.Println("Found %s merge requests", group.MergeRequests.Count)
 
-		snapshot, err := daemon.sheets.Snapshot(config.GoogleSpreadsheetId, "Merge Requests")
-		if err != nil {
-			log.WithError(err).Errorln("Failed to create sheet snapshot")
-			return err
-		}
-
-		if err := snapshot.Delete().Do(); err != nil {
-			log.WithError(err).Errorln("Failed to clear table")
-			return err
-		}
-
-		query := snapshot.Insert().Into("Student", "Task", "Merge request title", "Created at", "Merge status", "Pipeline status", "Url")
-
-		titleParser := newMergeRequestTitleParser()
-		for _, mr := range group.MergeRequests.Nodes {
-			info := titleParser.parse(mr)
-			query.Values(info.student, info.task, mr.Title, mr.CreatedAt, mr.MergeStatus, mr.HeadPipeline.Status, mr.WebUrl)
-		}
-		if err := query.Do(); err != nil {
-			log.WithError(err).Errorln("Failed to append merge requests to the table")
-			return err
-		}
-
-		if err := snapshot.Sort().By("Username", "Title").Do(); err != nil {
-			log.WithError(err).Errorln("Failed to sort table")
-			return err
-		}
-
-		if err := snapshot.Commit(); err != nil {
-			log.WithError(err).Errorln("Failed to commit snapshot, trying to rollback it")
-			err = snapshot.Rollback()
-			if err != nil {
-				log.WithError(err).Errorln("Rollback failed, I'm giving up")
+		err = daemon.sheets.WithSnapshot(config.GoogleSpreadsheetId, "Merge Requests", func(snapshot *sheets.Snapshot) error {
+			if err := snapshot.Delete().Do(); err != nil {
+				log.WithError(err).Errorln("Failed to clear table")
 				return err
-			} else {
-				log.Infoln("Successfully rolled back the snapshot")
-				return nil
 			}
+
+			query := snapshot.Insert().Into("Student", "Task", "Merge request title", "Created at", "Merge status", "Pipeline status", "Url")
+
+			titleParser := newMergeRequestTitleParser()
+			for _, mr := range group.MergeRequests.Nodes {
+				info := titleParser.parse(mr)
+				query.Values(info.student, info.task, mr.Title, mr.CreatedAt, mr.MergeStatus, mr.HeadPipeline.Status, mr.WebUrl)
+			}
+			if err := query.Do(); err != nil {
+				log.WithError(err).Errorln("Failed to append merge requests to the table")
+				return err
+			}
+
+			if err := snapshot.Sort().By("Username", "Title").Do(); err != nil {
+				log.WithError(err).Errorln("Failed to sort table")
+				return err
+			}
+
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 
 		log.Infoln("Successfully updated table")

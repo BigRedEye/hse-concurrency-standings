@@ -269,14 +269,22 @@ type SortQuery struct {
 	client  *Client
 	table   string
 	sheet   string
+	sheetId *int64
 	columns []string
 }
 
 func (c *Client) Sort(table string, sheet string) *SortQuery {
+	sheetId, err := c.findSheetId(table, sheet)
+	sheetIdRef := &sheetId
+	if err != nil {
+		sheetIdRef = nil
+	}
+
 	return &SortQuery{
-		client: c,
-		table:  table,
-		sheet:  sheet,
+		client:  c,
+		table:   table,
+		sheet:   sheet,
+		sheetId: sheetIdRef,
 	}
 }
 
@@ -286,6 +294,10 @@ func (q *SortQuery) By(columns ...string) *SortQuery {
 }
 
 func (q *SortQuery) Do() error {
+	if q.sheetId == nil {
+		return errors.New("Unknown sheet")
+	}
+
 	schema, err := loadSchema(q.client, q.table, q.sheet)
 
 	specs := make([]*sheets.SortSpec, len(q.columns))
@@ -299,7 +311,7 @@ func (q *SortQuery) Do() error {
 	requests := []*sheets.Request{{
 		SortRange: &sheets.SortRangeRequest{
 			Range: &sheets.GridRange{
-				SheetId:       0,
+				SheetId:       *q.sheetId,
 				StartRowIndex: 1,
 			},
 			SortSpecs: specs,
@@ -330,7 +342,7 @@ type Snapshot struct {
 }
 
 func (c *Client) Snapshot(table string, sheet string) (*Snapshot, error) {
-	res, err := c.service.Spreadsheets.Get(table).Fields("sheets").Do()
+	originalSheetId, err := c.findSheetId(table, sheet)
 	if err != nil {
 		return nil, err
 	}
@@ -339,34 +351,57 @@ func (c *Client) Snapshot(table string, sheet string) (*Snapshot, error) {
 		client:            c,
 		table:             table,
 		originalSheetName: sheet,
-		tempSheetId:       rand.Int63(),
+		originalSheetId:   originalSheetId,
+		tempSheetId:       int64(rand.Int31()),
 		tempSheetName:     randString(16),
 	}
 
-	foundSheet := false
-	for _, sheetRef := range res.Sheets {
-		if sheet == sheetRef.Properties.Title {
-			snapshot.originalSheetId = sheetRef.Properties.Index
-			foundSheet = true
-			break
-		}
-	}
-	if !foundSheet {
-		return nil, errors.New("Unknown sheet")
-	}
-
 	err = snapshot.batch(&sheets.Request{
-		AddSheet: &sheets.AddSheetRequest{
-			Properties: &sheets.SheetProperties{
-				Hidden:    true,
-				SheetId:   snapshot.tempSheetId,
-				Title:     snapshot.tempSheetName,
-				SheetType: "GRID",
-			},
+		DuplicateSheet: &sheets.DuplicateSheetRequest{
+			NewSheetId:    snapshot.tempSheetId,
+			NewSheetName:  snapshot.tempSheetName,
+			SourceSheetId: snapshot.originalSheetId,
 		},
 	})
+	if err != nil {
+		log.WithError(err).Errorln("Failed to create sheet snapshot")
+		return nil, err
+	}
 
 	return snapshot, nil
+}
+
+func (c *Client) WithSnapshot(table string, sheet string, cb func(*Snapshot) error) error {
+	snapshot, err := c.Snapshot(table, sheet)
+	if err != nil {
+		return err
+	}
+
+	err = cb(snapshot)
+
+	if err == nil {
+		return snapshot.Commit()
+	} else {
+		rollbackError := snapshot.Rollback()
+		if rollbackError != nil {
+			log.WithError(rollbackError).Errorln("Rollback failed")
+		}
+		return err
+	}
+}
+
+func (c *Client) findSheetId(table string, sheet string) (int64, error) {
+	res, err := c.service.Spreadsheets.Get(table).Fields("sheets").Do()
+	if err != nil {
+		return 0, err
+	}
+
+	for _, sheetRef := range res.Sheets {
+		if sheet == sheetRef.Properties.Title {
+			return sheetRef.Properties.SheetId, nil
+		}
+	}
+	return 0, errors.New("Unknown sheet")
 }
 
 func (s *Snapshot) Insert() *InsertQuery {
@@ -383,14 +418,20 @@ func (s *Snapshot) Sort() *SortQuery {
 
 func (s *Snapshot) Commit() error {
 	return s.batch(&sheets.Request{
-		DeleteSheet: &sheets.DeleteSheetRequest{
-			SheetId: s.originalSheetId,
+		DeleteRange: &sheets.DeleteRangeRequest{
+			Range: &sheets.GridRange{
+				SheetId: s.originalSheetId,
+			},
+			ShiftDimension: "ROWS",
 		},
 	}, &sheets.Request{
-		DuplicateSheet: &sheets.DuplicateSheetRequest{
-			NewSheetId:    s.originalSheetId,
-			NewSheetName:  s.originalSheetName,
-			SourceSheetId: s.tempSheetId,
+		CopyPaste: &sheets.CopyPasteRequest{
+			Source: &sheets.GridRange{
+				SheetId: s.tempSheetId,
+			},
+			Destination: &sheets.GridRange{
+				SheetId: s.originalSheetId,
+			},
 		},
 	}, &sheets.Request{
 		DeleteSheet: &sheets.DeleteSheetRequest{

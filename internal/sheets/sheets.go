@@ -362,6 +362,14 @@ func (c *Client) Snapshot(table string, sheet string) (*Snapshot, error) {
 			NewSheetName:  snapshot.tempSheetName,
 			SourceSheetId: snapshot.originalSheetId,
 		},
+	}, &sheets.Request{
+		UpdateSheetProperties: &sheets.UpdateSheetPropertiesRequest{
+			Fields: "hidden",
+			Properties: &sheets.SheetProperties{
+				SheetId: snapshot.tempSheetId,
+				Hidden:  true,
+			},
+		},
 	})
 	if err != nil {
 		log.WithError(err).Errorln("Failed to create sheet snapshot")

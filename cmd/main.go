@@ -73,7 +73,7 @@ func run() error {
 		if err != nil {
 			log.WithError(err).Fatalln("Failed to list group merge requests")
 		}
-		log.Println("Found %s merge requests", group.MergeRequests.Count)
+		log.Printf("Found %d merge requests", group.MergeRequests.Count)
 
 		err = daemon.sheets.WithSnapshot(config.GoogleSpreadsheetId, "Merge Requests", func(snapshot *sheets.Snapshot) error {
 			if err := snapshot.Delete().Do(); err != nil {

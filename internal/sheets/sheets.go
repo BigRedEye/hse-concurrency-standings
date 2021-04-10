@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/api/option"
@@ -317,4 +318,116 @@ func (q *SortQuery) Do() error {
 	}
 
 	return nil
+}
+
+type Snapshot struct {
+	client            *Client
+	table             string
+	originalSheetName string
+	originalSheetId   int64
+	tempSheetName     string
+	tempSheetId       int64
+}
+
+func (c *Client) Snapshot(table string, sheet string) (*Snapshot, error) {
+	res, err := c.service.Spreadsheets.Get(table).Fields("sheets").Do()
+	if err != nil {
+		return nil, err
+	}
+
+	snapshot := &Snapshot{
+		client:            c,
+		table:             table,
+		originalSheetName: sheet,
+		tempSheetId:       rand.Int63(),
+		tempSheetName:     randString(16),
+	}
+
+	foundSheet := false
+	for _, sheetRef := range res.Sheets {
+		if sheet == sheetRef.Properties.Title {
+			snapshot.originalSheetId = sheetRef.Properties.Index
+			foundSheet = true
+			break
+		}
+	}
+	if !foundSheet {
+		return nil, errors.New("Unknown sheet")
+	}
+
+	err = snapshot.batch(&sheets.Request{
+		AddSheet: &sheets.AddSheetRequest{
+			Properties: &sheets.SheetProperties{
+				Hidden:    true,
+				SheetId:   snapshot.tempSheetId,
+				Title:     snapshot.tempSheetName,
+				SheetType: "GRID",
+			},
+		},
+	})
+
+	return snapshot, nil
+}
+
+func (s *Snapshot) Insert() *InsertQuery {
+	return s.client.Insert(s.table, s.tempSheetName)
+}
+
+func (s *Snapshot) Delete() *DeleteQuery {
+	return s.client.Delete(s.table, s.tempSheetName)
+}
+
+func (s *Snapshot) Sort() *SortQuery {
+	return s.client.Sort(s.table, s.tempSheetName)
+}
+
+func (s *Snapshot) Commit() error {
+	return s.batch(&sheets.Request{
+		DeleteSheet: &sheets.DeleteSheetRequest{
+			SheetId: s.originalSheetId,
+		},
+	}, &sheets.Request{
+		DuplicateSheet: &sheets.DuplicateSheetRequest{
+			NewSheetId:    s.originalSheetId,
+			NewSheetName:  s.originalSheetName,
+			SourceSheetId: s.tempSheetId,
+		},
+	}, &sheets.Request{
+		DeleteSheet: &sheets.DeleteSheetRequest{
+			SheetId: s.tempSheetId,
+		},
+	})
+}
+
+func (s *Snapshot) Rollback() error {
+	return s.batch(&sheets.Request{
+		DeleteSheet: &sheets.DeleteSheetRequest{
+			SheetId: s.tempSheetId,
+		},
+	})
+}
+
+func (s *Snapshot) batch(requests ...*sheets.Request) error {
+	req := &sheets.BatchUpdateSpreadsheetRequest{
+		Requests: requests,
+	}
+
+	res, err := s.client.service.Spreadsheets.BatchUpdate(s.table, req).Do()
+	_ = res
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func randString(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
 }

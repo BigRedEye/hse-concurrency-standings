@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"math/rand"
 	"regexp"
 	"time"
 
@@ -46,6 +47,8 @@ func newDaemon(conf *config.Config) (*Daemon, error) {
 }
 
 func run() error {
+	rand.Seed(time.Now().Unix())
+
 	if err := godotenv.Load(); err != nil {
 		log.WithError(err).Warn("Failed to load .env file")
 	}
@@ -72,15 +75,20 @@ func run() error {
 		}
 		log.Println("Found %s merge requests", group.MergeRequests.Count)
 
-		// FIXME(sskvor): Emulate transactions
-		if err := daemon.sheets.Delete(config.GoogleSpreadsheetId, "Merge Requests").Do(); err != nil {
+		snapshot, err := daemon.sheets.Snapshot(config.GoogleSpreadsheetId, "Merge Requests")
+		if err != nil {
+			log.WithError(err).Errorln("Failed to create sheet snapshot")
+			return err
+		}
+
+		if err := snapshot.Delete().Do(); err != nil {
 			log.WithError(err).Errorln("Failed to clear table")
 			return err
 		}
 
-		titleParser := newMergeRequestTitleParser()
+		query := snapshot.Insert().Into("Student", "Task", "Merge request title", "Created at", "Merge status", "Pipeline status", "Url")
 
-		query := daemon.sheets.Insert(config.GoogleSpreadsheetId, "Merge Requests").Into("Student", "Task", "Merge request title", "Created at", "Merge status", "Pipeline status", "Url")
+		titleParser := newMergeRequestTitleParser()
 		for _, mr := range group.MergeRequests.Nodes {
 			info := titleParser.parse(mr)
 			query.Values(info.student, info.task, mr.Title, mr.CreatedAt, mr.MergeStatus, mr.HeadPipeline.Status, mr.WebUrl)
@@ -90,9 +98,21 @@ func run() error {
 			return err
 		}
 
-		if err := daemon.sheets.Sort(config.GoogleSpreadsheetId, "Merge Requests").By("Username", "Title").Do(); err != nil {
+		if err := snapshot.Sort().By("Username", "Title").Do(); err != nil {
 			log.WithError(err).Errorln("Failed to sort table")
 			return err
+		}
+
+		if err := snapshot.Commit(); err != nil {
+			log.WithError(err).Errorln("Failed to commit snapshot, trying to rollback it")
+			err = snapshot.Rollback()
+			if err != nil {
+				log.WithError(err).Errorln("Rollback failed, I'm giving up")
+				return err
+			} else {
+				log.Infoln("Successfully rolled back the snapshot")
+				return nil
+			}
 		}
 
 		log.Infoln("Successfully updated table")

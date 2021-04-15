@@ -173,7 +173,7 @@ func run() error {
 		}
 		log.Infoln("Successfully updated Merge Requests table")
 
-		err = daemon.sheets.WithSnapshot(config.GoogleSpreadsheetId, "Results", func(snapshot *sheets.Snapshot) error {
+		err = daemon.sheets.WithSnapshot(config.GoogleSpreadsheetId, "Reviews", func(snapshot *sheets.Snapshot) error {
 			if err := snapshot.Delete().Do(); err != nil {
 				log.WithError(err).Errorln("Failed to clear table")
 				return err
@@ -217,10 +217,10 @@ func run() error {
 			return nil
 		})
 		if err != nil {
-			log.WithError(err).Warn("Failed to update Merge Requests table")
+			log.WithError(err).Warn("Failed to update Reviews table")
 			return err
 		}
-		log.Infoln("Successfully updated Results table")
+		log.Infoln("Successfully updated Reviews table")
 
 		return nil
 	}

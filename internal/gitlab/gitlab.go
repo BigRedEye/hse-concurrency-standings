@@ -30,7 +30,7 @@ func (c *Client) ListGroupRequests(groupPath string) (*types.Group, error) {
   group(fullPath: $groupPath) {
     id
     name
-    mergeRequests(labels: $labels, first: 100, sort: created_desc, after: $cursor) {
+    mergeRequests(labels: $labels, first: 100, sort: CREATED_DESC, after: $cursor) {
       count
       nodes {
         title
@@ -49,6 +49,12 @@ func (c *Client) ListGroupRequests(groupPath string) (*types.Group, error) {
           status
         }
         webUrl
+        discussions {
+          nodes {
+            resolvable
+            resolved
+          }
+        }
       }
       pageInfo {
         endCursor

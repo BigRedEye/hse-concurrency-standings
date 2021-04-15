@@ -11,6 +11,14 @@ import (
 	"google.golang.org/api/sheets/v4"
 )
 
+type Color = sheets.Color
+
+type Cell struct {
+	Text            string
+	Hyperlink       string
+	BackgroundColor *Color
+}
+
 type Client struct {
 	service *sheets.Service
 }
@@ -27,19 +35,25 @@ func NewClient(ctx context.Context, credentialsFile string) (*Client, error) {
 }
 
 type InsertQuery struct {
-	client *Client
-	table  string
-	sheet  string
-	fields []string
-	values [][]interface{}
+	err error
+
+	client  *Client
+	table   string
+	sheet   string
+	sheetId int64
+	fields  []string
+	values  [][]interface{}
 }
 
 func (c *Client) Insert(table string, sheet string) *InsertQuery {
+	sheetId, err := c.findSheetId(table, sheet)
 	return &InsertQuery{
-		client: c,
-		table:  table,
-		sheet:  sheet,
-		values: make([][]interface{}, 0),
+		client:  c,
+		table:   table,
+		sheet:   sheet,
+		sheetId: sheetId,
+		values:  make([][]interface{}, 0),
+		err:     err,
 	}
 }
 
@@ -59,6 +73,10 @@ func (q *InsertQuery) Rows(rows [][]interface{}) *InsertQuery {
 }
 
 func (q *InsertQuery) Do() error {
+	if q.err != nil {
+		return q.err
+	}
+
 	if len(q.values) == 0 {
 		return nil
 	}
@@ -217,27 +235,68 @@ func (q *InsertQuery) validateSchema(mapping *columnMapping) (*columnMapping, er
 	return mapping, nil
 }
 
+func formatCellData(value interface{}) *sheets.CellData {
+	cell := &sheets.CellData{
+		UserEnteredValue:  &sheets.ExtendedValue{},
+		UserEnteredFormat: &sheets.CellFormat{},
+	}
+
+	if value == nil {
+		return cell
+	}
+
+	switch v := value.(type) {
+	case Cell:
+		if v.Hyperlink != "" {
+			if v.Text != "" {
+				cell.UserEnteredValue.FormulaValue = fmt.Sprintf("=HYPERLINK(\"%s\";\"%s\")", v.Hyperlink, v.Text)
+			} else {
+				cell.UserEnteredValue.FormulaValue = fmt.Sprintf("=HYPERLINK(\"%s\")", v.Hyperlink)
+			}
+		} else {
+			cell.UserEnteredValue.StringValue = v.Text
+		}
+		if v.BackgroundColor != nil {
+			cell.UserEnteredFormat.BackgroundColor = v.BackgroundColor
+		}
+	default:
+		cell.UserEnteredValue.StringValue = fmt.Sprintf("%s", value)
+	}
+
+	return cell
+}
+
 func (q *InsertQuery) execute(mapping *columnMapping) error {
 	if len(q.fields) == 0 {
 		return nil
 	}
 
-	valueRange := &sheets.ValueRange{
-		Values: make([][]interface{}, len(q.values)),
-	}
+	rows := make([]*sheets.RowData, len(q.values))
 
 	for i, row := range q.values {
 		if len(row) != len(q.fields) {
 			return errors.New("Mismatched numbers of values and fields")
 		}
-		valueRange.Values[i] = make([]interface{}, mapping.numColumns)
+
+		values := make([]*sheets.CellData, mapping.numColumns)
 
 		for j, field := range q.fields {
-			valueRange.Values[i][mapping.columnToIndex[field]] = q.values[i][j]
+			values[mapping.columnToIndex[field]] = formatCellData(q.values[i][j])
+		}
+
+		rows[i] = &sheets.RowData{
+			Values: values,
 		}
 	}
 
-	_, err := q.client.service.Spreadsheets.Values.Append(q.table, q.sheet, valueRange).ValueInputOption("RAW").Do()
+	err := q.client.batch(q.table, &sheets.Request{
+		AppendCells: &sheets.AppendCellsRequest{
+			Fields:  "*",
+			SheetId: q.sheetId,
+			Rows:    rows,
+		},
+	})
+
 	if err != nil {
 		log.WithError(err).Errorln("Failed to append values")
 		return err
@@ -456,12 +515,12 @@ func (s *Snapshot) Rollback() error {
 	})
 }
 
-func (s *Snapshot) batch(requests ...*sheets.Request) error {
+func (c *Client) batch(table string, requests ...*sheets.Request) error {
 	req := &sheets.BatchUpdateSpreadsheetRequest{
 		Requests: requests,
 	}
 
-	res, err := s.client.service.Spreadsheets.BatchUpdate(s.table, req).Do()
+	res, err := c.service.Spreadsheets.BatchUpdate(table, req).Do()
 	_ = res
 
 	if err != nil {
@@ -469,6 +528,10 @@ func (s *Snapshot) batch(requests ...*sheets.Request) error {
 	}
 
 	return nil
+}
+
+func (s *Snapshot) batch(requests ...*sheets.Request) error {
+	return s.client.batch(s.table, requests...)
 }
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"

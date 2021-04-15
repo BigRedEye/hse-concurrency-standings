@@ -18,13 +18,14 @@ type Pagination struct {
 }
 
 type MergeRequest struct {
-	Title        string         `json:"title"`
-	Author       User           `json:"author"`
-	CreatedAt    string         `json:"createdAt"`
-	MergeStatus  string         `json:"mergeStatus"`
-	ApprovedBy   UserCollection `json:"approvedBy"`
-	HeadPipeline Pipeline       `json:"headPipeline"`
-	WebUrl       string         `json:"webUrl"`
+	Title        string               `json:"title"`
+	Author       User                 `json:"author"`
+	CreatedAt    string               `json:"createdAt"`
+	MergeStatus  string               `json:"mergeStatus"`
+	ApprovedBy   UserCollection       `json:"approvedBy"`
+	HeadPipeline Pipeline             `json:"headPipeline"`
+	WebUrl       string               `json:"webUrl"`
+	Discussions  DiscussionCollection `json:"discussions"`
 }
 
 type User struct {
@@ -38,4 +39,13 @@ type UserCollection struct {
 
 type Pipeline struct {
 	Status string `json:"status"`
+}
+
+type DiscussionCollection struct {
+	Nodes []*Discussion
+}
+
+type Discussion struct {
+	Resolved   bool
+	Resolvable bool
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -146,7 +147,7 @@ func run() error {
 
 			query := snapshot.Insert().Into("Student", "Task", "Merge request title", "Created at", "Merge status", "Pipeline status", "Url")
 
-			titleParser := newMergeRequestTitleParser()
+			titleParser := newMergeRequestTitleParser(config)
 			for _, mr := range group.MergeRequests.Nodes {
 				info := titleParser.parse(mr)
 				if _, found := mergeRequestsByStudent[info.student]; !found {
@@ -233,8 +234,31 @@ func run() error {
 	}
 }
 
+type Reviewer struct {
+	Username  string
+	Pseudonym string
+}
+
 type mergeRequestTitleParser struct {
-	re *regexp.Regexp
+	re        *regexp.Regexp
+	reviewers map[string]*Reviewer
+}
+
+func newMergeRequestTitleParser(config *config.Config) *mergeRequestTitleParser {
+	reviewers := make(map[string]*Reviewer)
+	eligibleReviewers := []*Reviewer{}
+	json.Unmarshal([]byte(config.EligibleReviewers), &eligibleReviewers)
+
+	for _, reviewer := range eligibleReviewers {
+		log.Infoln("Found reviewer", reviewer.Username)
+		reviewers[reviewer.Username] = reviewer
+	}
+
+	re := regexp.MustCompile(`^\[(\w+)\] \[(\w+)-(\w+)\] (.+/.+)$`)
+	return &mergeRequestTitleParser{
+		re:        re,
+		reviewers: reviewers,
+	}
 }
 
 type mergeRequestTitle struct {
@@ -247,14 +271,7 @@ type mergeRequestTitle struct {
 	mergeStatus         string
 	numProblems         int
 	numResolvedProblems int
-	approved            bool
-}
-
-func newMergeRequestTitleParser() *mergeRequestTitleParser {
-	re := regexp.MustCompile(`^\[(\w+)\] \[(\w+)-(\w+)\] (.+/.+)$`)
-	return &mergeRequestTitleParser{
-		re: re,
-	}
+	approvedBy          []*Reviewer
 }
 
 func (s *mergeRequestTitleParser) parse(mr *types.MergeRequest) *mergeRequestTitle {
@@ -264,7 +281,14 @@ func (s *mergeRequestTitleParser) parse(mr *types.MergeRequest) *mergeRequestTit
 		mergeStatus:         mr.MergeStatus,
 		numProblems:         0,
 		numResolvedProblems: 0,
-		approved:            len(mr.ApprovedBy.Nodes) > 0,
+		approvedBy:          make([]*Reviewer, 0),
+	}
+	for _, user := range mr.ApprovedBy.Nodes {
+		if reviewer, found := s.reviewers[user.Username]; found {
+			res.approvedBy = append(res.approvedBy, reviewer)
+		} else {
+			log.Warnln("Unknown reviewer", user.Username)
+		}
 	}
 
 	for _, discussion := range mr.Discussions.Nodes {
@@ -289,32 +313,57 @@ func (s *mergeRequestTitleParser) parse(mr *types.MergeRequest) *mergeRequestTit
 	return res
 }
 
+func parseHexColor(s string) *sheets.Color {
+	var r, g, b int
+
+	switch len(s) {
+	case 7:
+		_, err := fmt.Sscanf(s, "#%02x%02x%02x", &r, &g, &b)
+		if err != nil {
+			return nil
+		}
+	case 4:
+		_, err := fmt.Sscanf(s, "#%1x%1x%1x", &r, &g, &b)
+		if err != nil {
+			return nil
+		}
+		r *= 0xf1
+		g *= 0xf1
+		b *= 0xf1
+	default:
+		return nil
+	}
+
+	return &sheets.Color{
+		Red:   float64(r) / 0xff,
+		Green: float64(g) / 0xff,
+		Blue:  float64(b) / 0xff,
+	}
+}
+
 var (
-	LightRed = &sheets.Color{
-		Red:   0.95,
-		Green: 0.80,
-		Blue:  0.80,
-	}
-	LightGreen = &sheets.Color{
-		Red:   0.85,
-		Green: 0.91,
-		Blue:  0.82,
-	}
-	LightYellow = &sheets.Color{
-		Red:   1.00,
-		Green: 0.94,
-		Blue:  0.80,
-	}
-	LightPurple = &sheets.Color{
-		Red:   0.85,
-		Green: 0.82,
-		Blue:  0.91,
-	}
+	LightRed    = parseHexColor("#ea9999")
+	LightGreen  = parseHexColor("#b6d7a8")
+	LightYellow = parseHexColor("#fff2cc")
+	LightOrange = parseHexColor("#f9cb9c")
+	LightPurple = parseHexColor("#b4a7d6")
 )
 
+func firstRune(s *string) rune {
+	for _, c := range *s {
+		return c
+	}
+	return 'w'
+}
+
 func classifyMergeRequestStatus(mr *mergeRequestTitle) (string, *sheets.Color) {
-	if mr.approved {
-		return "Approved", LightGreen
+	if len(mr.approvedBy) > 0 {
+		res := "Approved ["
+		for _, user := range mr.approvedBy {
+			res += user.Pseudonym
+		}
+		res += "]"
+		return res, LightGreen
 	}
 
 	if mr.pipelineStatus != "SUCCESS" {
@@ -322,12 +371,12 @@ func classifyMergeRequestStatus(mr *mergeRequestTitle) (string, *sheets.Color) {
 	}
 
 	if mr.numProblems > mr.numResolvedProblems {
-		return "Unresolved problems", LightPurple
+		return "Rejected", LightPurple
 	}
 
 	if mr.numProblems == 0 {
 		return "Pending", LightYellow
 	} else {
-		return "Problems resolved", LightYellow
+		return "Problems resolved", LightOrange
 	}
 }

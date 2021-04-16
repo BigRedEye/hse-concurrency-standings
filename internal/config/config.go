@@ -16,6 +16,7 @@ type Config struct {
 	GitLabLabel           string        `mapstructure:"gitlab_label"`
 	IterationInterval     time.Duration `mapstructure:"iteration_interval"`
 	DeadlinesUrl          string        `mapstructure:"deadlines_url"`
+	EligibleReviewers     string        `mapstructure:"eligible_reviewers"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -26,6 +27,7 @@ func LoadConfig() (*Config, error) {
 	viper.BindEnv("GITLAB_LABEL")
 	viper.BindEnv("ITERATION_INTERVAL")
 	viper.BindEnv("DEADLINES_URL")
+	viper.BindEnv("ELIGIBLE_REVIEWERS")
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {

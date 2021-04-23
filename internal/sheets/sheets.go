@@ -358,6 +358,9 @@ func (q *SortQuery) Do() error {
 	}
 
 	schema, err := loadSchema(q.client, q.table, q.sheet)
+	if err != nil {
+		return err
+	}
 
 	specs := make([]*sheets.SortSpec, len(q.columns))
 	for i := range specs {
